@@ -12,8 +12,7 @@
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 
-#include "dnnopt/conv/conv.h"
-#include "dnnopt/arm_hwcaps.h"
+#include "dnnopt_stub.h"
 
 using namespace tensorflow;
 
@@ -38,16 +37,16 @@ REGISTER_OP("DnnoptConv2D")
         shape_inference::ShapeHandle filter_shape;
         TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 4, &filter_shape));
 
-        // 获取维度
-        int64 batch = c->Dim(input_shape, 0);
-        int64 ih = c->Dim(input_shape, 1);
-        int64 iw = c->Dim(input_shape, 2);
-        int64 ic = c->Dim(input_shape, 3);
+        // 获取维度 (使用 DimensionHandle)
+        shape_inference::DimensionHandle batch = c->Dim(input_shape, 0);
+        shape_inference::DimensionHandle ih = c->Dim(input_shape, 1);
+        shape_inference::DimensionHandle iw = c->Dim(input_shape, 2);
+        shape_inference::DimensionHandle ic = c->Dim(input_shape, 3);
 
         // Filter 可能是 HWIO 或 OIHW 格式
         // 我们根据 input channels 来判断
-        int64 oc;
-        int64 kh, kw;
+        shape_inference::DimensionHandle oc;
+        shape_inference::DimensionHandle kh, kw;
 
         // 检查 filter 形状判断布局
         auto filter_dim = c->Dim(filter_shape, 3);
@@ -74,18 +73,36 @@ REGISTER_OP("DnnoptConv2D")
         TF_RETURN_IF_ERROR(c->GetAttr("padding", &padding));
 
         // 计算输出空间维度
-        int64 oh, ow;
+        shape_inference::DimensionHandle oh, ow;
         if (padding == "SAME") {
-            oh = (ih + stride_h - 1) / stride_h;
-            ow = (iw + stride_w - 1) / stride_w;
+            // SAME padding: oh = ceil(ih / stride_h)
+            if (c->ValueKnown(ih)) {
+                oh = c->MakeDim((c->Value(ih) + stride_h - 1) / stride_h);
+            } else {
+                oh = c->UnknownDim();
+            }
+            if (c->ValueKnown(iw)) {
+                ow = c->MakeDim((c->Value(iw) + stride_w - 1) / stride_w);
+            } else {
+                ow = c->UnknownDim();
+            }
         } else {  // VALID
-            oh = (ih - c->Value(kh)) / stride_h + 1;
-            ow = (iw - c->Value(kw)) / stride_w + 1;
+            // VALID: oh = (ih - kh) / stride_h + 1
+            if (c->ValueKnown(ih) && c->ValueKnown(kh)) {
+                oh = c->MakeDim((c->Value(ih) - c->Value(kh)) / stride_h + 1);
+            } else {
+                oh = c->UnknownDim();
+            }
+            if (c->ValueKnown(iw) && c->ValueKnown(kw)) {
+                ow = c->MakeDim((c->Value(iw) - c->Value(kw)) / stride_w + 1);
+            } else {
+                ow = c->UnknownDim();
+            }
         }
 
         // 设置输出 shape
         c->set_output(0, c->MakeShape({batch, oh, ow, oc}));
-        return Status::OK();
+        return absl::OkStatus();
     });
 
 // ============================================================================
@@ -140,7 +157,7 @@ public:
         const int fdim3 = filter_tensor.dim_size(3);
 
         int OC, KH, KW;
-        bool filter_is_hwio = (fdim3 == IC);  // HWIO: [KH, KW, IC, OC]
+        bool filter_is_hwio = (fdim2 == IC);  // HWIO: [KH, KW, IC, OC] - IC is at index 2
 
         if (filter_is_hwio) {
             // TensorFlow 默认 HWIO 格式: [KH, KW, IC, OC]
@@ -197,6 +214,8 @@ public:
         params.stride_w = stride_w;
         params.pad_h = pad_h;
         params.pad_w = pad_w;
+        params.OH_val = OH;  // Pre-computed output dimensions
+        params.OW_val = OW;
 
         // 设置 post-op
         dnnopt::ConvPostOp post_op = dnnopt::ConvPostOp::kNone;

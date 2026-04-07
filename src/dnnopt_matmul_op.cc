@@ -11,8 +11,7 @@
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 
-#include "dnnopt/gemm/gemm.h"
-#include "dnnopt/arm_hwcaps.h"
+#include "dnnopt_stub.h"
 
 using namespace tensorflow;
 
@@ -50,7 +49,7 @@ REGISTER_OP("DnnoptMatMul")
 
         // 设置输出 shape
         c->set_output(0, c->MakeShape({m, n}));
-        return Status::OK();
+        return absl::OkStatus();
     });
 
 // ============================================================================
@@ -143,15 +142,12 @@ public:
                                   b_data, ldb,
                                   0.0f, c_data, ldc);
             } else if (transpose_b_) {
-                // C = A * B^T, A is M x K, B^T is K x N
-                // In row-major: B is N x K, B^T is K x N
-                // We can use ldb as is, but need to treat B as K x N
-                // Actually dnnopt expects: C[MxN] = A[MxK] * B[KxN]
-                // B is stored as N x K (row-major), B^T is K x N
-                // So we pass B with ldb = K (treating it as K x N)
+                // C = A * B^T, A is M x K, B is N x K (stored), B^T is K x N
+                // Need to transpose B to get K x N
+                Tensor b_t = TransposeMatrix(context, b_tensor);
                 dnnopt::gemm_fp32(M, N, K,
                                   1.0f, a_data, lda,
-                                  b_data, ldb,
+                                  b_t.flat<float>().data(), N,
                                   0.0f, c_data, ldc);
             } else {
                 // C = A * B, standard GEMM
@@ -197,6 +193,8 @@ private:
     string precision_;
 
     // 转置矩阵 (简单实现，可用于小矩阵)
+    // WARNING: 此实现为朴素 O(M*K) 转置，大矩阵性能较差
+    // TODO: 使用 NEON/SVE 优化版本或 Strassen 算法
     Tensor TransposeMatrix(OpKernelContext* context, const Tensor& input) {
         int rows = input.dim_size(0);
         int cols = input.dim_size(1);
@@ -205,6 +203,14 @@ private:
         const float* in_data = input.flat<float>().data();
         float* out_data = output.flat<float>().data();
 
+        // 对于大矩阵，朴素实现较慢，考虑分块优化
+        if (rows * cols > 1024 * 1024) {
+            LOG(WARNING) << "Transposing large matrix (" << rows << "x" << cols
+                         << ") may be slow. Consider using smaller tiles or "
+                         << "pre-transposed weights.";
+        }
+
+        // 简单转置: out[j][i] = in[i][j]
         for (int i = 0; i < rows; ++i) {
             for (int j = 0; j < cols; ++j) {
                 out_data[j * rows + i] = in_data[i * cols + j];

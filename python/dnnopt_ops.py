@@ -160,7 +160,7 @@ def dnnopt_matmul(
     """
     if _dnnopt_ops is not None:
         # 使用 DNN-Opt Custom Op
-        return _dnnopt_ops.dnnopt_matmul(
+        return _dnnopt_ops.dnnopt_mat_mul(
             a, b,
             transpose_a=transpose_a,
             transpose_b=transpose_b,

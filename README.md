@@ -2,6 +2,8 @@
 
 将 DNN-Opt 高性能 ARM 优化库集成到 TensorFlow 中，实现 ARM 平台上的最优推理性能。
 
+**最大特点：用户无需修改任何代码，自动获得性能提升！**
+
 ## 性能预期
 
 | 场景 | vs TensorFlow Eigen | vs TensorFlow oneDNN |
@@ -32,29 +34,49 @@
 git clone https://github.com/xuefenghao5121/TF-DnnOpt.git
 cd TF-DnnOpt
 
-# 设置 DNN-Opt 路径 (可选)
-export DNNOPT_DIR=/path/to/dnn-opt
-
 # 编译
 chmod +x build.sh
 ./build.sh
 ```
 
-### 3. 使用
+### 3. 无感知使用（推荐）
+
+**只需一行代码，无需修改任何 TensorFlow 代码：**
 
 ```python
-from python.dnnopt_ops import dnnopt_conv2d, dnnopt_matmul
+import dnnopt_tensorflow  # 在导入 tensorflow 之前或之后导入
+import tensorflow as tf
 
-# Conv2D
-output = dnnopt_conv2d(
-    input, filter, bias,
-    strides=(1, 1, 1, 1),
-    padding='SAME',
-    post_op='relu'
-)
+# 以下代码完全不变，自动使用 DNN-Opt 优化
+model = tf.keras.applications.ResNet50(weights='imagenet')
+output = model(input_image)  # 自动使用 DNN-Opt Conv2D
 
-# MatMul
-output = dnnopt_matmul(a, b, precision='fp32')
+# tf.nn.conv2d 自动使用 DNN-Opt
+output = tf.nn.conv2d(input, filter, strides=[1,1,1,1], padding='SAME')
+
+# tf.matmul 自动使用 DNN-Opt
+output = tf.matmul(a, b)
+```
+
+**控制选项：**
+
+```python
+import dnnopt_tensorflow
+
+# 启用/禁用 DNN-Opt
+dnnopt_tensorflow.disable()  # 禁用，恢复原生 TensorFlow
+dnnopt_tensorflow.enable()   # 重新启用
+
+# 检查状态
+print(dnnopt_tensorflow.is_patched())         # 是否已 patch
+print(dnnopt_tensorflow.is_dnnopt_available()) # DNN-Opt 是否可用
+```
+
+**环境变量控制：**
+
+```bash
+DNNOPT_DISABLE=1   # 禁用 DNN-Opt patching
+DNNOPT_VERBOSE=1   # 显示详细日志
 ```
 
 ## 项目结构
@@ -66,50 +88,55 @@ TF-DnnOpt/
 │   └── dnnopt_matmul_op.cc    # MatMul Custom Op
 ├── python/
 │   ├── __init__.py            # 模块导出
-│   ├── dnnopt_ops.py          # Python API
+│   ├── dnnopt_tensorflow.py   # ⭐ 无感知集成 (Monkey Patching)
+│   ├── dnnopt_ops.py          # 显式 Python API
 │   ├── inference_engine.py    # 推理引擎
 │   └── model_converter.py     # 模型转换工具
 ├── tests/
 │   ├── test_conv2d_correctness.py
 │   ├── test_matmul_correctness.py
-│   ├── test_inference.py
-│   └── run_tests.py
+│   └── test_inference.py
 ├── benchmarks/
-│   ├── benchmark_conv2d.py    # Conv2D 基准测试
-│   └── benchmark_model.py     # 模型级基准测试
+│   ├── benchmark_conv2d.py
+│   └── benchmark_model.py
 ├── examples/
-│   └── resnet50_example.py    # ResNet50 示例
-├── build.sh                   # 构建脚本
-├── WORKSPACE                  # Bazel 工作区
+│   ├── transparent_usage_example.py  # ⭐ 无感知使用示例
+│   └── resnet50_example.py
+├── build.sh
+├── WORKSPACE
 └── README.md
 ```
 
-## API 文档
+## 无感知集成原理
 
-### dnnopt_conv2d
+导入 `dnnopt_tensorflow` 后，自动替换以下 TensorFlow API：
+
+| 原生 API | 替换为 |
+|----------|--------|
+| `tf.nn.conv2d` | DNN-Opt Conv2D |
+| `tf.matmul` | DNN-Opt MatMul |
+| `tf.keras.layers.Conv2D` | DNN-Opt Conv2D Layer |
+| `tf.keras.layers.Dense` | DNN-Opt MatMul Layer |
+
+**自动 Fallback：** 当 DNN-Opt 不支持某些参数（如 dilation、NCHW 格式）时，自动回退到 TensorFlow 原生实现。
+
+## 显式 API（可选）
+
+如果需要显式控制，也可以直接使用 API：
 
 ```python
-dnnopt_conv2d(
-    input,              # [N, H, W, C] NHWC 格式
-    filter,             # [KH, KW, IC, OC] TensorFlow 默认格式
-    bias=None,          # [OC] 或 None
-    strides=(1,1,1,1),  # [1, sh, sw, 1]
-    padding='SAME',     # 'SAME' 或 'VALID'
-    post_op='none',     # 'none', 'relu', 'relu6'
-    data_format='NHWC'
-)
-```
+from dnnopt_ops import dnnopt_conv2d, dnnopt_matmul
 
-### dnnopt_matmul
-
-```python
-dnnopt_matmul(
-    a,                  # [M, K]
-    b,                  # [K, N]
-    transpose_a=False,
-    transpose_b=False,
-    precision='fp32'    # 'fp32', 'bf16', 'int8'
+# Conv2D
+output = dnnopt_conv2d(
+    input, filter, bias,
+    strides=(1, 1, 1, 1),
+    padding='SAME',
+    post_op='relu'
 )
+
+# MatMul
+output = dnnopt_matmul(a, b, precision='fp32')
 ```
 
 ## 构建选项

@@ -65,9 +65,20 @@ TF-DnnOpt/
 │   ├── dnnopt_conv2d_op.cc    # Conv2D Custom Op
 │   └── dnnopt_matmul_op.cc    # MatMul Custom Op
 ├── python/
-│   └── dnnopt_ops.py          # Python API
+│   ├── __init__.py            # 模块导出
+│   ├── dnnopt_ops.py          # Python API
+│   ├── inference_engine.py    # 推理引擎
+│   └── model_converter.py     # 模型转换工具
 ├── tests/
-│   └── test_conv2d_correctness.py
+│   ├── test_conv2d_correctness.py
+│   ├── test_matmul_correctness.py
+│   ├── test_inference.py
+│   └── run_tests.py
+├── benchmarks/
+│   ├── benchmark_conv2d.py    # Conv2D 基准测试
+│   └── benchmark_model.py     # 模型级基准测试
+├── examples/
+│   └── resnet50_example.py    # ResNet50 示例
 ├── build.sh                   # 构建脚本
 ├── WORKSPACE                  # Bazel 工作区
 └── README.md
@@ -120,8 +131,77 @@ dnnopt_matmul(
 - [x] 阶段 2: Conv2D Custom Op
 - [x] 阶段 3: MatMul Custom Op
 - [x] 阶段 4: Python 封装
-- [ ] 阶段 5: 模型转换工具
-- [ ] 阶段 6: 测试与优化
+- [x] 阶段 5: 模型转换工具
+- [x] 阶段 6: 测试与优化
+
+## 测试
+
+### 运行所有测试
+
+```bash
+cd tests
+python run_tests.py
+```
+
+### 运行特定测试
+
+```bash
+# Conv2D 正确性测试
+python tests/test_conv2d_correctness.py
+
+# MatMul 正确性测试
+python tests/test_matmul_correctness.py
+
+# 端到端推理测试
+python tests/test_inference.py
+
+# 包含性能测试
+python tests/test_matmul_correctness.py --perf
+```
+
+### 性能基准测试
+
+```bash
+# Conv2D 基准测试
+python benchmarks/benchmark_conv2d.py --config resnet --iterations 100
+
+# 模型级基准测试
+python benchmarks/benchmark_model.py --model cnn --batch-size 1
+```
+
+## 推理引擎使用
+
+```python
+from inference_engine import DnnoptInferenceEngine
+
+# 创建推理引擎
+engine = DnnoptInferenceEngine('path/to/saved_model')
+
+# 单次推理
+result = engine.run(input_data)
+print(f"延迟: {result.latency_ms:.2f} ms")
+
+# 基准测试
+stats = engine.benchmark(input_data, iterations=100)
+print(f"平均延迟: {stats['mean_ms']:.2f} ms")
+print(f"吞吐量: {stats['throughput_fps']:.2f} FPS")
+```
+
+## 模型转换
+
+```python
+from model_converter import convert_savedmodel, convert_keras_model
+
+# 转换 SavedModel
+stats = convert_savedmodel(
+    input_dir='path/to/original_model',
+    output_dir='path/to/optimized_model'
+)
+
+# 转换 Keras 模型
+model = tf.keras.applications.ResNet50(weights='imagenet')
+stats = convert_keras_model(model, output_dir='path/to/optimized_model')
+```
 
 ## License
 
